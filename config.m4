@@ -19,7 +19,7 @@ if test "$PHP_COUCHBASE" != "no"; then
       fi
     done
   fi
-
+  
   if test -z "$COUCHBASE_DIR"; then
      AC_MSG_RESULT([not found])
      AC_MSG_ERROR([couchbase support requires libcouchbase. Use --with-couchbase=<DIR> to specify the prefix where libcouchbase headers and library are located])
@@ -28,7 +28,7 @@ if test "$PHP_COUCHBASE" != "no"; then
   PHP_ADD_INCLUDE($COUCHBASE_DIR/include/)
 
   LIBNAME=couchbase # you may want to change this
-  LIBSYMBOL=libcouchbase_connect # you most likely want to change this
+  LIBSYMBOL=libcouchbase_connect # you most likely want to change this 
 
   PHP_CHECK_LIBRARY($LIBNAME,$LIBSYMBOL,
   [
@@ -39,7 +39,7 @@ if test "$PHP_COUCHBASE" != "no"; then
   ],[
     -L$COUCHBASE_DIR/lib -l$LIBNAME
   ])
-
+  
   dnl PHP_REQUIRE_CXX()
   dnl PHP_ADD_LIBRARY(stdc++, 1, COUCHBASE_SHARED_LIBADD)
   dnl PHP_ADD_LIBRARY(event, 1, COUCHBASE_SHARED_LIBADD)
