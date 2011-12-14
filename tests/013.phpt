@@ -2,6 +2,8 @@
 Check for couchbase_replace
 --SKIPIF--
 <?php include "skipif.inc" ?>
+--INI--
+precision=19
 --FILE--
 <?php
 include "couchbase.inc";
@@ -19,8 +21,8 @@ var_dump(couchbase_replace($handle, $key, $value));
 var_dump(COUCHBASE_KEY_ENOENT == couchbase_get_result_code($handle));
 ?>
 --EXPECTF--
-float(%s)
-float(%s)
+float(%d)
+float(%d)
 string(3) "foo"
 bool(false)
 bool(true)

@@ -1,5 +1,5 @@
 --TEST--
-Check for number key
+Check for couchbase_get_result_code
 --SKIPIF--
 <?php include "skipif.inc" ?>
 --INI--
@@ -8,7 +8,7 @@ precision=19
 <?php
 include "couchbase.inc";
 $handle = couchbase_connect(COUCHBASE_CONFIG_HOST, COUCHBASE_CONFIG_USER, COUCHBASE_CONFIG_PASSWD, COUCHBASE_CONFIG_BUCKET);
-$key = 8888888;
+$key = uniqid("couchbase_");
 var_dump(couchbase_get($handle, $key, "foo"));
 var_dump(COUCHBASE_KEY_ENOENT === couchbase_get_result_code($handle));
 
