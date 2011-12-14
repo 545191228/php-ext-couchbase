@@ -2,6 +2,8 @@
 Check for couchbase_set
 --SKIPIF--
 <?php include "skipif.inc" ?>
+--INI--
+precision=19
 --FILE--
 <?php
 include "couchbase.inc";
@@ -16,6 +18,6 @@ var_dump($cas1 != $cas2);
 couchbase_delete($handle, $key);
 ?>
 --EXPECTF--
-float(%s)
-float(%s)
+float(%d)
+float(%d)
 bool(true)
