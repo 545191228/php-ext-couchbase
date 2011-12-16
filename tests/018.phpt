@@ -10,7 +10,7 @@ include "couchbase.inc";
 $handle = couchbase_connect(COUCHBASE_CONFIG_HOST, COUCHBASE_CONFIG_USER, COUCHBASE_CONFIG_PASSWD, COUCHBASE_CONFIG_BUCKET);
 
 var_dump(couchbase_set($handle, "", "foo"));
-var_dump(couchbase_get($handle, "", "foo"));
+var_dump(couchbase_get($handle, ""));
 var_dump(couchbase_replace($handle, "", "foo"));
 var_dump(couchbase_add($handle, "", "foo"));
 print_r(couchbase_get_multi($handle, array("")));

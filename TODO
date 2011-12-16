@@ -1,8 +1,6 @@
 Functions:
-   couchbase_get_delayed
-   couchbase_fetch
-   couchbase_fetch_all
-   couchbase_set_multi
+   couchbase_set_option
+   couchbase_get_option
 
 Serializer
    json

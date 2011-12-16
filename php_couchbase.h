@@ -76,7 +76,8 @@ enum memcached_serializer {
 typedef struct _php_couchbase_res {
     libcouchbase_t handle;
     libcouchbase_io_opt_t *io;
-    unsigned long seqno;
+    long seqno;
+    unsigned char async;
     unsigned char serializer;
     unsigned char compression_type;
     libcouchbase_error_t rc;
@@ -86,6 +87,7 @@ typedef struct _php_couchbase_ctx {
     zval *rv;
     zval *cas;
     php_couchbase_res *res;
+    unsigned char flags;
     void *extended_value;
 } php_couchbase_ctx;
 
@@ -104,12 +106,16 @@ PHP_MINFO_FUNCTION(couchbase);
 PHP_FUNCTION(couchbase_connect);
 PHP_FUNCTION(couchbase_add);
 PHP_FUNCTION(couchbase_set);
+PHP_FUNCTION(couchbase_set_multi);
 PHP_FUNCTION(couchbase_replace);
 PHP_FUNCTION(couchbase_prepend);
 PHP_FUNCTION(couchbase_append);
 PHP_FUNCTION(couchbase_cas);
 PHP_FUNCTION(couchbase_get);
 PHP_FUNCTION(couchbase_get_multi);
+PHP_FUNCTION(couchbase_get_delayed);
+PHP_FUNCTION(couchbase_fetch);
+PHP_FUNCTION(couchbase_fetch_all);
 PHP_FUNCTION(couchbase_delete);
 PHP_FUNCTION(couchbase_get_stats);
 PHP_FUNCTION(couchbase_flush);
