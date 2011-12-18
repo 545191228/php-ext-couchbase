@@ -28,6 +28,7 @@ extern zend_module_entry couchbase_module_entry;
 
 #ifdef PHP_WIN32
 #    define PHP_COUCHBASE_API __declspec(dllexport)
+#    define strtoull _strtoui64
 #elif defined(__GNUC__) && __GNUC__ >= 4
 #    define PHP_COUCHBASE_API __attribute__ ((visibility("default")))
 #else
@@ -79,7 +80,7 @@ typedef struct _php_couchbase_res {
     long seqno;
     unsigned char async;
     unsigned char serializer;
-    unsigned char compression_type;
+    unsigned char compression;
     libcouchbase_error_t rc;
 } php_couchbase_res;
 
@@ -93,7 +94,7 @@ typedef struct _php_couchbase_ctx {
 
 ZEND_BEGIN_MODULE_GLOBALS(couchbase)
     unsigned char serializer;
-    unsigned char compression_type;
+    unsigned char compression;
 ZEND_END_MODULE_GLOBALS(couchbase)
 
 PHP_GINIT_FUNCTION(couchbase);

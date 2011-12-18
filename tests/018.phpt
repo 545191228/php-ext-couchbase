@@ -3,7 +3,7 @@ Check for empty key
 --SKIPIF--
 <?php include "skipif.inc" ?>
 --INI--
-precision=19
+
 --FILE--
 <?php
 include "couchbase.inc";

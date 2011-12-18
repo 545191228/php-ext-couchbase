@@ -3,7 +3,7 @@ Check for couchbase delayed & fetch_all
 --SKIPIF--
 <?php exit; include "skipif.inc" ?>
 --INI--
-precision=19
+
 --FILE--
 <?php
 include "couchbase.inc";
@@ -61,28 +61,28 @@ Array
         (
             [key] => couchbase_%s
             [value] => couchbase_value_%s
-            [cas] => %d
+            [cas] => %s
         )
 
     [1] => Array
         (
             [key] => couchbase_%s
             [value] => couchbase_value_%s
-            [cas] => %d
+            [cas] => %s
         )
 
     [2] => Array
         (
             [key] => couchbase_%s
             [value] => couchbase_value_%s
-            [cas] => %d
+            [cas] => %s
         )
 
     [3] => Array
         (
             [key] => couchbase_%s
             [value] => couchbase_value_%s
-            [cas] => %d
+            [cas] => %s
         )
 
 )

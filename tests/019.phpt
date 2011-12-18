@@ -3,7 +3,7 @@ Check for couchbase delayed & callback
 --SKIPIF--
 <?php exit; include "skipif.inc" ?>
 --INI--
-precision=19
+
 --FILE--
 <?php
 include "couchbase.inc";

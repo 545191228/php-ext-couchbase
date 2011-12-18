@@ -3,7 +3,7 @@ Check for couchbase_get_result_code
 --SKIPIF--
 <?php include "skipif.inc" ?>
 --INI--
-precision=19
+
 --FILE--
 <?php
 include "couchbase.inc";
@@ -32,7 +32,7 @@ NULL
 bool(true)
 bool(false)
 bool(true)
-float(%d)
+string(%d) %s
 bool(true)
 bool(true)
 bool(true)
