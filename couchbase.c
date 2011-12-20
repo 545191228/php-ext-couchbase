@@ -712,7 +712,12 @@ static void php_couchbase_get_impl(INTERNAL_FUNCTION_PARAMETERS, int multi) /* {
     long *klens, klen = 0;
     int  nkey, flag = 0;
     zval *res, *cas_token = NULL;
+#if PHP_MAJOR_VERSION == 5 && PHP_MINOR_VERSION > 2
+    zend_fcall_info fci = {0};
+    zend_fcall_info_cache fci_cache;
+#else
     zval *callback = NULL;
+#endif
     if (multi) {
         zval *akeys;
         zval **ppzval;
@@ -758,19 +763,20 @@ static void php_couchbase_get_impl(INTERNAL_FUNCTION_PARAMETERS, int multi) /* {
             array_init(cas_token);
         }
     } else {
-        if(zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "rs|zz", &res, &key, &klen, &callback, &cas_token) == FAILURE) {
-            return;
-        }
-        if (callback && Z_TYPE_P(callback) != IS_NULL 
 #if PHP_MAJOR_VERSION == 5 && PHP_MINOR_VERSION > 2
-                && !zend_is_callable(callback, 0, NULL TSRMLS_CC)
+        if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "rs|f!z", &res, &key, &klen, &fci, &fci_cache, &cas_token) == FAILURE)
 #else
-                && !zend_is_callable(callback, 0, NULL TSRMLS_CC)
+        if(zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "rs|zz", &res, &key, &klen, &callback, &cas_token) == FAILURE)
 #endif
-           ) {
+        {
+           return;
+        }
+#if PHP_MAJOR_VERSION == 5 && PHP_MINOR_VERSION < 3
+        if (callback && Z_TYPE_P(callback) != IS_NULL && !zend_is_callable(callback, 0, NULL)) {
             php_error_docref(NULL TSRMLS_CC, E_WARNING, "Third argument is expected to be a valid callback");
             return;
         }
+#endif
         if (!klen) {
             return;
         }
@@ -810,7 +816,13 @@ static void php_couchbase_get_impl(INTERNAL_FUNCTION_PARAMETERS, int multi) /* {
         couchbase_res->io->run_event_loop(couchbase_res->io);
         if (LIBCOUCHBASE_SUCCESS != ctx->res->rc) {
             if (LIBCOUCHBASE_KEY_ENOENT == ctx->res->rc) {
-                if (callback) {
+                if (
+#if PHP_MAJOR_VERSION == 5 && PHP_MINOR_VERSION > 2
+                        fci.size
+#else
+                        callback
+#endif
+                   ) {
                     zval *retval_ptr, *result, *zkey;
                     zval **params[3];
 
@@ -820,12 +832,24 @@ static void php_couchbase_get_impl(INTERNAL_FUNCTION_PARAMETERS, int multi) /* {
                     params[0] = &res;
                     params[1] = &zkey;
                     params[2] = &result;
+#if PHP_MAJOR_VERSION == 5 && PHP_MINOR_VERSION > 2
+                    fci.retval_ptr_ptr = &retval_ptr;
+                    fci.param_count = 3;
+                    fci.params = params;
+                    if (zend_call_function(&fci, &fci_cache TSRMLS_CC) == SUCCESS && fci.retval_ptr_ptr && *fci.retval_ptr_ptr) {
+                        if (Z_TYPE_P(retval_ptr) == IS_BOOL && Z_BVAL_P(retval_ptr)) {
+                            zval_ptr_dtor(&zkey);
+                            RETURN_ZVAL(result, 0, 0);
+                        }
+                    }
+#else
                     if (call_user_function_ex(EG(function_table), NULL, callback, &retval_ptr, 3, params, 0, NULL TSRMLS_CC) == SUCCESS) {
                         if (Z_TYPE_P(retval_ptr) == IS_BOOL && Z_BVAL_P(retval_ptr)) {
                             zval_ptr_dtor(&zkey);
                             RETURN_ZVAL(result, 0, 0);
                         }
                     }
+#endif
                     zval_ptr_dtor(&zkey);
                     zval_ptr_dtor(&result);
                 }
@@ -846,19 +870,22 @@ static void php_couchbase_get_impl(INTERNAL_FUNCTION_PARAMETERS, int multi) /* {
 static void php_couchbase_get_delayed_impl(INTERNAL_FUNCTION_PARAMETERS) /* {{{ */ {
     zval *res, *akeys;
     long with_cas = 0;
+#if PHP_MAJOR_VERSION == 5 && PHP_MINOR_VERSION > 2
+    zend_fcall_info fci = {0};
+    zend_fcall_info_cache fci_cache;
+    if(zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "ra|lf!", &res, &akeys, &with_cas, &fci, &fci_cache) == FAILURE) {
+        return;
+    }
+#else
     zval *callback = NULL;
     if(zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "ra|lz", &res, &akeys, &with_cas, &callback) == FAILURE) {
         return;
     } else if (callback && Z_TYPE_P(callback) != IS_NULL 
-#if PHP_MAJOR_VERSION == 5 && PHP_MINOR_VERSION > 2
-                && !zend_is_callable(callback, 0, NULL TSRMLS_CC)
-#else
-                && !zend_is_callable(callback, 0, NULL TSRMLS_CC)
-#endif
-            ) {
+            && !zend_is_callable(callback, 0, NULL)) {
         php_error_docref(NULL TSRMLS_CC, E_WARNING, "Third argument is expected to be a valid callback");
         return;
     }
+#endif
     else {
         zval **ppzval;
         libcouchbase_error_t retval;
@@ -918,7 +945,13 @@ static void php_couchbase_get_delayed_impl(INTERNAL_FUNCTION_PARAMETERS) /* {{{ 
         libcouchbase_set_cookie(couchbase_res->handle, (const void *)ctx);
         efree(keys);
         efree(klens);
-        if (callback) {
+        if (
+#if PHP_MAJOR_VERSION == 5 && PHP_MINOR_VERSION > 2
+                fci.size
+#else
+                callback
+#endif
+           ) {
             zval *result, **ppzval, *retval_ptr;
             zval **params[2];
 
@@ -935,7 +968,14 @@ static void php_couchbase_get_delayed_impl(INTERNAL_FUNCTION_PARAMETERS) /* {{{ 
                 }
                 params[0] = &res;
                 params[1] = ppzval;
+#if PHP_MAJOR_VERSION == 5 && PHP_MINOR_VERSION > 2
+                fci.retval_ptr_ptr = &retval_ptr;
+                fci.param_count = 2;
+                fci.params = params;
+                zend_call_function(&fci, &fci_cache TSRMLS_CC);
+#else
                 call_user_function_ex(EG(function_table), NULL, callback, &retval_ptr, 2, params, 0, NULL TSRMLS_CC);
+#endif
                 zval_ptr_dtor(&retval_ptr);
             }
             zval_ptr_dtor(&result);
