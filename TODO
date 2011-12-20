@@ -1,7 +1,3 @@
-Functions:
-   couchbase_set_option
-   couchbase_get_option
+Compression
+More options for couchbase_set_option
 
-Serializer
-   json
-   serialize

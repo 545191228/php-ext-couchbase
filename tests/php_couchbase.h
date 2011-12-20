@@ -28,7 +28,6 @@ extern zend_module_entry couchbase_module_entry;
 
 #ifdef PHP_WIN32
 #    define PHP_COUCHBASE_API __declspec(dllexport)
-#    define strtoull _strtoui64
 #elif defined(__GNUC__) && __GNUC__ >= 4
 #    define PHP_COUCHBASE_API __attribute__ ((visibility("default")))
 #else
@@ -49,7 +48,7 @@ extern zend_module_entry couchbase_module_entry;
 #define php_ignore_value(x) ((void) (x))
 #endif
 
-#if (PHP_MAJOR_VERSION == 5) && (PHP_MINOR_VERSION > 2)
+#if (PHP_MAJOR_VERSION == 5) && (PHP_MINFO_FUNCTION > 2)
 #define COUCHBASE_ARG_PREFIX
 #else
 #define COUCHBASE_ARG_PREFIX static
@@ -65,19 +64,14 @@ enum memcached_serializer {
     SERIALIZER_JSON_ARRAY = 4,
 };
 
-#define COUCHBASE_OPT_SERIALIZER            1
-
 #define COUCHBASE_SERIALIZER_PHP            0
+#define COUCHBASE_SERIALIZER_JSON           1
+#define COUCHBASE_SERIALIZER_JSON_ARRAY     2
 #define COUCHBASE_SERIALIZER_DEFAULT        SERIALIZER_PHP
 #define COUCHBASE_SERIALIZER_DEFAULT_NAME   "php"
 
-#ifdef HAVE_JSON_API
-#   define COUCHBASE_SERIALIZER_JSON        1
-#   define COUCHBASE_SERIALIZER_JSON_ARRAY  2
-#endif
-
-#define COUCHBASE_IS_JSON                   65
-#define COUCHBASE_IS_SERIALIZED             66
+#define COMPRESSION_TYPE_FASTLZ 0
+#define COMPRESSION_TYPE_ZLIB   1
 
 typedef struct _php_couchbase_res {
     libcouchbase_t handle;
@@ -85,6 +79,7 @@ typedef struct _php_couchbase_res {
     long seqno;
     unsigned char async;
     unsigned char serializer;
+    unsigned char compression_type;
     libcouchbase_error_t rc;
 } php_couchbase_res;
 
@@ -98,6 +93,7 @@ typedef struct _php_couchbase_ctx {
 
 ZEND_BEGIN_MODULE_GLOBALS(couchbase)
     unsigned char serializer;
+    unsigned char compression_type;
 ZEND_END_MODULE_GLOBALS(couchbase)
 
 PHP_GINIT_FUNCTION(couchbase);
@@ -126,8 +122,6 @@ PHP_FUNCTION(couchbase_flush);
 PHP_FUNCTION(couchbase_increment);
 PHP_FUNCTION(couchbase_decrement);
 PHP_FUNCTION(couchbase_get_result_code);
-PHP_FUNCTION(couchbase_set_option);
-PHP_FUNCTION(couchbase_get_option);
 PHP_FUNCTION(couchbase_version);
 
 #endif    /* PHP_COUCHBASE_H */
