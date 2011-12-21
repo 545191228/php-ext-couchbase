@@ -58,18 +58,11 @@ extern zend_module_entry couchbase_module_entry;
 #define PHP_COUCHBASE_VERSION     "0.0.1"
 #define PHP_COUCHBASE_RESOURCE    "Couchbase"
 
-enum memcached_serializer {
-    SERIALIZER_PHP = 1,
-    SERIALIZER_IGBINARY = 2,
-    SERIALIZER_JSON = 3,
-    SERIALIZER_JSON_ARRAY = 4,
-};
-
 #define COUCHBASE_OPT_SERIALIZER            1
 #define COUCHBASE_OPT_PREFIX_KEY            2
 
 #define COUCHBASE_SERIALIZER_PHP            0
-#define COUCHBASE_SERIALIZER_DEFAULT        SERIALIZER_PHP
+#define COUCHBASE_SERIALIZER_DEFAULT        COUCHBASE_SERIALIZER_PHP
 #define COUCHBASE_SERIALIZER_DEFAULT_NAME   "php"
 
 #ifdef HAVE_JSON_API
