@@ -303,7 +303,7 @@ PHP_INI_BEGIN()
 PHP_INI_END()
 /* }}} */
 
-static char *php_couchbase_zval_to_payload(zval *value, size_t *payload_len, unsigned int *flags, int serializer TSRMLS_DC) /* {{{ */ {
+static char * php_couchbase_zval_to_payload(zval *value, size_t *payload_len, unsigned int *flags, int serializer TSRMLS_DC) /* {{{ */ {
     char *payload;
     smart_str buf = {0};
 
@@ -493,6 +493,13 @@ php_couchbase_get_callback(libcouchbase_t handle,
             return;
         }
 
+        if (ctx->res->prefix_key_len && nkey) {
+            if (!strncmp(key, ctx->res->prefix_key, ctx->res->prefix_key_len)) {
+                nkey -= (ctx->res->prefix_key_len + 1); /* '_' */
+                key = estrndup(key + ctx->res->prefix_key_len + 1, nkey);
+            }
+        }
+
         MAKE_STD_ZVAL(retval);
         array_init(retval);
         zend_hash_next_index_insert(Z_ARRVAL_P(ctx->rv), (void **)&retval, sizeof(zval *), NULL);
@@ -511,6 +518,9 @@ php_couchbase_get_callback(libcouchbase_t handle,
             zend_hash_add(Z_ARRVAL_P(retval), "cas", sizeof("cas"), (void **)&c, sizeof(zval *), NULL);
         }
 
+        if (ctx->res->prefix_key_len && nkey) {
+            efree((void *)key);
+        }
     } else {
         if (LIBCOUCHBASE_KEY_ENOENT == error) {
             ZVAL_NULL(ctx->rv);
@@ -526,6 +536,12 @@ php_couchbase_get_callback(libcouchbase_t handle,
                 return;
            }
 
+            if (ctx->res->prefix_key_len && nkey) {
+                if (!strncmp(key, ctx->res->prefix_key, ctx->res->prefix_key_len)) {
+                    nkey -= (ctx->res->prefix_key_len + 1);
+                    key = estrndup(key + ctx->res->prefix_key_len + 1, nkey);
+                }
+            }
            zend_hash_add((Z_ARRVAL_P(ctx->rv)), (char *)key, nkey + 1, (void **)&v, sizeof(zval *), NULL);
             if (ctx->cas) {
                 zval *c;
@@ -534,10 +550,25 @@ php_couchbase_get_callback(libcouchbase_t handle,
                 Z_STRLEN_P(c) = spprintf(&(Z_STRVAL_P(c)), 0, "%llu", cas);
                 zend_hash_add(Z_ARRVAL_P(ctx->cas), (char *)key, nkey + 1, (void **)&c, sizeof(zval *), NULL);
             }
+            if (ctx->res->prefix_key_len && nkey) {
+                efree((void*)key);
+            }
         } else {
+            if (ctx->res->prefix_key_len && nkey) {
+                if (!strncmp(key, ctx->res->prefix_key, ctx->res->prefix_key_len)) {
+                    nkey -= (ctx->res->prefix_key_len + 1);
+                    key = estrndup(key + ctx->res->prefix_key_len + 1, nkey);
+                }
+            }
             if (!php_couchbase_zval_from_payload(ctx->rv, (char *)bytes, nbytes, flags, ctx->res->serializer TSRMLS_CC)) {
+                if (ctx->res->prefix_key_len && nkey) {
+                    efree((void *)key);
+                }
                 ctx->res->rc = LIBCOUCHBASE_ERROR;
                 return;
+            }
+            if (ctx->res->prefix_key_len && nkey) {
+                efree((void *)key);
             }
             if (ctx->cas) {
                 Z_TYPE_P(ctx->cas) = IS_STRING;
@@ -702,6 +733,9 @@ static void php_couchbase_res_dtor(zend_rsrc_list_entry *rsrc TSRMLS_DC) /* {{{ 
         if (couchbase_res->handle) {
             libcouchbase_destroy(couchbase_res->handle);
         }
+        if (couchbase_res->prefix_key) {
+            efree((void *)couchbase_res->prefix_key);
+        }
         efree(couchbase_res);
     }
 }
@@ -718,12 +752,22 @@ static void php_couchbase_get_impl(INTERNAL_FUNCTION_PARAMETERS, int multi) /* {
 #else
     zval *callback = NULL;
 #endif
+    libcouchbase_error_t retval;
+    php_couchbase_res *couchbase_res;
+    php_couchbase_ctx *ctx;
+
     if (multi) {
         zval *akeys;
         zval **ppzval;
         int i;
         if(zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "ra|zl", &res, &akeys, &cas_token, &flag) == FAILURE) {
             return;
+        }
+
+        ZEND_FETCH_RESOURCE(couchbase_res, php_couchbase_res *, &res, -1, PHP_COUCHBASE_RESOURCE, le_couchbase);
+        if (couchbase_res->async) {
+            php_error_docref(NULL TSRMLS_CC, E_WARNING, "There are some results should be fetched before do any sync request");
+            RETURN_FALSE;
         }
 
         array_init(return_value);
@@ -749,8 +793,12 @@ static void php_couchbase_get_impl(INTERNAL_FUNCTION_PARAMETERS, int multi) /* {
                 continue;
             }
 
-            keys[i] = Z_STRVAL_PP(ppzval);
-            klens[i] = Z_STRLEN_PP(ppzval);
+            if (couchbase_res->prefix_key_len) {
+                klens[i] = spprintf(&(keys[i]), 0, "%s_%s", couchbase_res->prefix_key, Z_STRVAL_PP(ppzval));
+            } else {
+                keys[i] = Z_STRVAL_PP(ppzval);
+                klens[i] = Z_STRLEN_PP(ppzval);
+            }
         }
 
         if (!nkey) {
@@ -780,14 +828,6 @@ static void php_couchbase_get_impl(INTERNAL_FUNCTION_PARAMETERS, int multi) /* {
         if (!klen) {
             return;
         }
-        nkey = 1;
-        keys = &key;
-        klens = &klen;
-    }
-    {
-        libcouchbase_error_t retval;
-        php_couchbase_res *couchbase_res;
-        php_couchbase_ctx *ctx;
 
         ZEND_FETCH_RESOURCE(couchbase_res, php_couchbase_res *, &res, -1, PHP_COUCHBASE_RESOURCE, le_couchbase);
         if (couchbase_res->async) {
@@ -795,6 +835,14 @@ static void php_couchbase_get_impl(INTERNAL_FUNCTION_PARAMETERS, int multi) /* {
             RETURN_FALSE;
         }
 
+        nkey = 1;
+        if (couchbase_res->prefix_key_len) {
+            klen = spprintf(&key, 0, "%s_%s", couchbase_res->prefix_key, key);
+        }
+        keys = &key;
+        klens = &klen;
+    }
+    {
         ctx = ecalloc(1, sizeof(php_couchbase_ctx));
         ctx->res = couchbase_res;
         ctx->rv  = return_value;
@@ -802,6 +850,12 @@ static void php_couchbase_get_impl(INTERNAL_FUNCTION_PARAMETERS, int multi) /* {
 
         retval = libcouchbase_mget(couchbase_res->handle, (const void *)ctx, nkey, (const void *)keys, (size_t *)klens, NULL);
         if (LIBCOUCHBASE_SUCCESS != retval) {
+            if (couchbase_res->prefix_key_len) {
+                int i;
+                for (i=0; i<nkey; i++) {
+                    efree(keys[i]);
+                }
+            }
             if (multi) {
                 efree(keys);
                 efree(klens);
@@ -858,6 +912,12 @@ static void php_couchbase_get_impl(INTERNAL_FUNCTION_PARAMETERS, int multi) /* {
                         "Faild to get a value from server: %s", libcouchbase_strerror(couchbase_res->handle, ctx->res->rc));
             }
         }
+        if (couchbase_res->prefix_key_len) {
+            int i;
+            for (i=0; i<nkey; i++) {
+                efree(keys[i]);
+            }
+        }
         if (multi) {
             efree(keys);
             efree(klens);
@@ -898,6 +958,8 @@ static void php_couchbase_get_delayed_impl(INTERNAL_FUNCTION_PARAMETERS) /* {{{ 
         keys = ecalloc(nkey, sizeof(char *));
         klens = ecalloc(nkey, sizeof(long));
 
+        ZEND_FETCH_RESOURCE(couchbase_res, php_couchbase_res *, &res, -1, PHP_COUCHBASE_RESOURCE, le_couchbase);
+
         for(i=0, zend_hash_internal_pointer_reset(Z_ARRVAL_P(akeys));
                 zend_hash_has_more_elements(Z_ARRVAL_P(akeys)) == SUCCESS;
                 zend_hash_move_forward(Z_ARRVAL_P(akeys)), i++) {
@@ -915,8 +977,12 @@ static void php_couchbase_get_delayed_impl(INTERNAL_FUNCTION_PARAMETERS) /* {{{ 
                 continue;
             }
 
-            keys[i] = Z_STRVAL_PP(ppzval);
-            klens[i] = Z_STRLEN_PP(ppzval);
+            if (couchbase_res->prefix_key_len) {
+                klens[i] = spprintf(&(keys[i]), 0, "%s_%s", couchbase_res->prefix_key, Z_STRVAL_PP(ppzval));
+            } else {
+                keys[i] = Z_STRVAL_PP(ppzval);
+                klens[i] = Z_STRLEN_PP(ppzval);
+            }
         }
 
         if (!nkey) {
@@ -925,8 +991,6 @@ static void php_couchbase_get_delayed_impl(INTERNAL_FUNCTION_PARAMETERS) /* {{{ 
             return;
         }
 
-        ZEND_FETCH_RESOURCE(couchbase_res, php_couchbase_res *, &res, -1, PHP_COUCHBASE_RESOURCE, le_couchbase);
-
         ctx = ecalloc(1, sizeof(php_couchbase_ctx));
         ctx->res = couchbase_res;
         ctx->flags = with_cas;
@@ -934,6 +998,12 @@ static void php_couchbase_get_delayed_impl(INTERNAL_FUNCTION_PARAMETERS) /* {{{ 
 
         retval = libcouchbase_mget(couchbase_res->handle, (const void *)ctx, nkey, (const void * const *)keys, (size_t *)klens, NULL);
         if (LIBCOUCHBASE_SUCCESS != retval) {
+            if (couchbase_res->prefix_key_len) {
+                int i;
+                for (i=0; i<nkey; i++) {
+                    efree(keys[i]);
+                }
+            }
             efree(keys);
             efree(klens);
             efree(ctx);
@@ -943,6 +1013,12 @@ static void php_couchbase_get_delayed_impl(INTERNAL_FUNCTION_PARAMETERS) /* {{{ 
         }
         couchbase_res->async = 1;
         libcouchbase_set_cookie(couchbase_res->handle, (const void *)ctx);
+        if (couchbase_res->prefix_key_len) {
+            int i;
+            for (i=0; i<nkey; i++) {
+                efree(keys[i]);
+            }
+        }
         efree(keys);
         efree(klens);
         if (
@@ -1079,6 +1155,10 @@ static void php_couchbase_store_impl(INTERNAL_FUNCTION_PARAMETERS, libcouchbase_
             RETURN_FALSE;
         }   
 
+        if (couchbase_res->prefix_key_len) {
+            klen = spprintf(&key, 0, "%s_%s", couchbase_res->prefix_key, key);
+        }
+
         ctx = ecalloc(1, sizeof(php_couchbase_ctx));
         ctx->res = couchbase_res;
         ctx->rv  = return_value;
@@ -1094,6 +1174,9 @@ static void php_couchbase_store_impl(INTERNAL_FUNCTION_PARAMETERS, libcouchbase_
 
         retval = libcouchbase_store(couchbase_res->handle,
                 (const void *)ctx, op, key, klen, payload, payload_len, flags, exp, (uint64_t)cas_v);
+        if (couchbase_res->prefix_key_len) {
+            efree(key); 
+        }
         if (LIBCOUCHBASE_SUCCESS != retval) {
             efree(ctx);
             php_error_docref(NULL TSRMLS_CC, E_WARNING,
@@ -1148,22 +1231,27 @@ static void php_couchbase_store_impl(INTERNAL_FUNCTION_PARAMETERS, libcouchbase_
 
             if (!(payload = php_couchbase_zval_to_payload(*ppzval, &payload_len, &flags, couchbase_res->serializer TSRMLS_CC))) {
                 RETURN_FALSE;
-            }   
+            }
+
+            if (couchbase_res->prefix_key_len) {
+                char *new_key;
+                klen = spprintf(&new_key, 0, "%s_%s", couchbase_res->prefix_key, key);
+                if (HASH_KEY_IS_LONG) {
+                    efree(key);
+                }
+                key = new_key;
+            }
 
             retval = libcouchbase_store(couchbase_res->handle,
                     (const void *)ctx, op, key, klen, payload, payload_len, flags, exp, 0);
+            if (couchbase_res->prefix_key_len || HASH_KEY_IS_LONG == key_type) {
+                efree(key);
+            }
             if (LIBCOUCHBASE_SUCCESS != retval) {
-                if(HASH_KEY_IS_LONG == key_type) {
-                    efree(key);
-                }
                 efree(ctx);
                 php_error_docref(NULL TSRMLS_CC, E_WARNING,
                         "Failed to schedule set request: %s", libcouchbase_strerror(couchbase_res->handle, retval));
                 RETURN_FALSE;
-            }
-
-            if (HASH_KEY_IS_LONG == key_type) {
-                efree(key);
             }
             nkey++;
         }
@@ -1413,6 +1501,10 @@ static void php_couchbase_cas_impl(INTERNAL_FUNCTION_PARAMETERS) /* {{{ */ {
             RETURN_FALSE;
         }
 
+        if (couchbase_res->prefix_key_len) {
+            klen = spprintf(&key, 0, "%s_%s", couchbase_res->prefix_key, key);
+        }
+
         ctx = ecalloc(1, sizeof(php_couchbase_ctx));
         ctx->res = couchbase_res;
         ctx->rv = return_value;
@@ -1431,6 +1523,9 @@ static void php_couchbase_cas_impl(INTERNAL_FUNCTION_PARAMETERS) /* {{{ */ {
 
         retval = libcouchbase_store(couchbase_res->handle, (const void *)ctx,
                 LIBCOUCHBASE_SET, key, klen, payload, payload_len, flags, exp, (uint64_t)cas_v);
+        if (couchbase_res->prefix_key_len) {
+            efree(key);
+        }
         if (LIBCOUCHBASE_SUCCESS != retval) {
             efree(ctx);
             php_error_docref(NULL TSRMLS_CC, E_WARNING,
@@ -1502,7 +1597,7 @@ PHP_FUNCTION(couchbase_connect) {
         php_ignore_value(libcouchbase_set_arithmetic_callback(handle, php_couchbase_arithmetic_callback));
         php_ignore_value(libcouchbase_set_stat_callback(handle, php_couchbase_stat_callback));
 
-        couchbase_res = emalloc(sizeof(php_couchbase_res));
+        couchbase_res = ecalloc(1, sizeof(php_couchbase_res));
         couchbase_res->handle = handle;
         couchbase_res->seqno = -1; /* tell error callback stop event loop when error occurred */
         couchbase_res->io = iops;
@@ -1665,11 +1760,11 @@ PHP_FUNCTION(couchbase_get_result_code) {
 /* {{{ proto couchbase_set_option(resource $couchbase, int $option, int $value)
  */
 PHP_FUNCTION(couchbase_set_option) {
-    zval *res;
+    long option;
+    zval *res, *value;
     php_couchbase_res *couchbase_res;
-    long option, value;
 
-    if(zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "rll", &res, &option, &value) == FAILURE) {
+    if(zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "rlz", &res, &option, &value) == FAILURE) {
         return;
     }
     ZEND_FETCH_RESOURCE(couchbase_res, php_couchbase_res *, &res, -1, PHP_COUCHBASE_RESOURCE, le_couchbase);
@@ -1677,17 +1772,24 @@ PHP_FUNCTION(couchbase_set_option) {
     switch (option) {
         case COUCHBASE_OPT_SERIALIZER:
             {
-                switch (value) {
+                convert_to_long_ex(&value);
+                switch (Z_LVAL_P(value)) {
                     case COUCHBASE_SERIALIZER_PHP:
 #ifdef HAVE_JSON_API
                     case COUCHBASE_SERIALIZER_JSON:
                     case COUCHBASE_SERIALIZER_JSON_ARRAY:
 #endif
-                        couchbase_res->serializer = value;
+                        couchbase_res->serializer = Z_LVAL_P(value);
                         RETURN_TRUE;
                     default:
-                    php_error_docref(NULL TSRMLS_CC, E_WARNING, "Unsupported serializer:%d", value);
+                    php_error_docref(NULL TSRMLS_CC, E_WARNING, "Unsupported serializer:%d", Z_LVAL_P(value));
                 }
+            }
+        case COUCHBASE_OPT_PREFIX_KEY:
+            {
+                convert_to_string_ex(&value);
+                couchbase_res->prefix_key = estrndup(Z_STRVAL_P(value), Z_STRLEN_P(value));
+                couchbase_res->prefix_key_len = Z_STRLEN_P(value);
             }
             break;
         default:
@@ -1713,6 +1815,14 @@ PHP_FUNCTION(couchbase_get_option) {
     switch (option) {
         case COUCHBASE_OPT_SERIALIZER:
             RETURN_LONG(couchbase_res->serializer);
+            break;
+        case COUCHBASE_OPT_PREFIX_KEY:
+            if (couchbase_res->prefix_key_len) {
+                RETURN_STRINGL((char *)couchbase_res->prefix_key, couchbase_res->prefix_key_len, 1);
+            } else {
+                ZVAL_EMPTY_STRING(return_value);
+                return;
+            }
             break;
         default:
             php_error_docref(NULL TSRMLS_CC, E_WARNING, "Unknow option type:%d", option);
@@ -1763,6 +1873,8 @@ PHP_MINIT_FUNCTION(couchbase) {
 
 
     REGISTER_LONG_CONSTANT("COUCHBASE_OPT_SERIALIZER",     COUCHBASE_OPT_SERIALIZER, CONST_PERSISTENT | CONST_CS);
+    REGISTER_LONG_CONSTANT("COUCHBASE_OPT_PREFIX_KEY",     COUCHBASE_OPT_PREFIX_KEY, CONST_PERSISTENT | CONST_CS);
+
     REGISTER_LONG_CONSTANT("COUCHBASE_SERIALIZER_PHP",     COUCHBASE_SERIALIZER_PHP, CONST_PERSISTENT | CONST_CS);
 #ifdef HAVE_JSON_API
     REGISTER_LONG_CONSTANT("COUCHBASE_SERIALIZER_JSON",    COUCHBASE_SERIALIZER_JSON, CONST_PERSISTENT | CONST_CS);

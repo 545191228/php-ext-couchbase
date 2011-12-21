@@ -66,6 +66,7 @@ enum memcached_serializer {
 };
 
 #define COUCHBASE_OPT_SERIALIZER            1
+#define COUCHBASE_OPT_PREFIX_KEY            2
 
 #define COUCHBASE_SERIALIZER_PHP            0
 #define COUCHBASE_SERIALIZER_DEFAULT        SERIALIZER_PHP
@@ -85,6 +86,8 @@ typedef struct _php_couchbase_res {
     long seqno;
     unsigned char async;
     unsigned char serializer;
+    const char *prefix_key;
+    unsigned int prefix_key_len;
     libcouchbase_error_t rc;
 } php_couchbase_res;
 
