@@ -47,7 +47,7 @@ if test "$PHP_COUCHBASE" != "no"; then
   if test "$PHP_COUCHBASE_JSON" != "no"; then
     AC_MSG_CHECKING([for json includes])
     json_inc_path=""
-    
+
     tmp_version=$PHP_VERSION
     if test -z "$tmp_version"; then
       if test -z "$PHP_CONFIG"; then
@@ -63,7 +63,7 @@ if test "$PHP_COUCHBASE" != "no"; then
    fi
 
    PHP_VERSION_MASK=`echo ${PHP_VERSION_ORIG} | awk 'BEGIN { FS = "."; } { printf "%d", ($1 * 1000 + $2) * 1000 + $3;}'`
-   
+
    if test $PHP_VERSION_MASK -ge 5003000; then
      if test -f "$abs_srcdir/include/php/ext/json/php_json.h"; then
        json_inc_path="$abs_srcdir/include/php"
@@ -107,7 +107,7 @@ if test "$PHP_COUCHBASE" != "no"; then
        AC_DEFINE(HAVE_JSON_API_5_2,1,[Whether JSON API for PHP 5.2 is available])
        AC_MSG_RESULT([$json_inc_path])
      fi
-   else 
+   else
      AC_MSG_ERROR([the PHP version does not support JSON serialization API])
    fi
   fi
