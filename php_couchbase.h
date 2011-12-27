@@ -72,12 +72,16 @@ extern zend_class_entry *couchbase_ce;
 
 #define COUCHBASE_IS_JSON                   30 
 #define COUCHBASE_IS_SERIALIZED             31
-#define COUCHBASE_TYPE_MASK                 31
+#define COUCHBASE_GET_TYPE(f)               ((f) & 31)
 
+#define COUCHBASE_COMPRESSER_MASK           224 /* 7 << 5 */
 #define COUCHBASE_COMPRESSER_NONE           0
-#define COUCHBASE_COMPRESSER_FASTLZ         32
-#define COUCHBASE_COMPRESSER_ZLIB           64
-#define COUCHBASE_COMPRESSION_MASK          224 /* (7<<5) */
+#define COUCHBASE_COMPRESSER_FASTLZ         1
+#define COUCHBASE_COMPRESSER_ZLIB           2
+
+#define COUCHBASE_GET_COMPRESSER(f)         ((f) >> 5)
+#define COUCHBASE_SET_COMPRESSER(f, c)      ((f) = ((f) & ~COUCHBASE_COMPRESSER_MASK) | (c) << 5)
+
 
 typedef struct _php_couchbase_res {
     libcouchbase_t handle;

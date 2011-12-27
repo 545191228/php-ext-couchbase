@@ -504,7 +504,8 @@ static char * php_couchbase_zval_to_payload(zval *value, size_t *payload_len, un
     switch (Z_TYPE_P(value)) {
         case IS_STRING:
             smart_str_appendl(&buf, Z_STRVAL_P(value), Z_STRLEN_P(value));
-            *flags = IS_STRING | compresser;
+            *flags = IS_STRING;
+            COUCHBASE_SET_COMPRESSER(*flags, compresser);
             break;
         case IS_LONG:
         case IS_DOUBLE:
@@ -516,11 +517,11 @@ static char * php_couchbase_zval_to_payload(zval *value, size_t *payload_len, un
                 convert_to_string(&value_copy);
                 smart_str_appendl(&buf, Z_STRVAL(value_copy), Z_STRLEN(value_copy));
                 zval_dtor(&value_copy);
-
                 *flags = Z_TYPE_P(value);
                 break;
             }
         default:
+            COUCHBASE_SET_COMPRESSER(*flags, compresser);
             switch (serializer) {
                 case COUCHBASE_SERIALIZER_JSON:
                 case COUCHBASE_SERIALIZER_JSON_ARRAY:
@@ -532,11 +533,11 @@ static char * php_couchbase_zval_to_payload(zval *value, size_t *payload_len, un
                         php_json_encode(&buf, value, 0 TSRMLS_CC); /* options */
 #endif
                         buf.c[buf.len] = 0;
-                        *flags = COUCHBASE_IS_JSON | compresser;
+                        *flags |= COUCHBASE_IS_JSON;
                         break;
                     }
 #else
-                    php_error_docref(NULL TSRMLS_CC, E_WARNING, "Could not serialize value, no json support");
+                    php_error_docref(NULL TSRMLS_CC, E_WARNING, "could not serialize value, no json support");
                     return NULL;
 #endif
                 default:
@@ -547,25 +548,24 @@ static char * php_couchbase_zval_to_payload(zval *value, size_t *payload_len, un
                         PHP_VAR_SERIALIZE_DESTROY(var_hash);
 
                         if (!buf.c) {
-                            php_error_docref(NULL TSRMLS_CC, E_WARNING, "Could not serialize value");
+                            php_error_docref(NULL TSRMLS_CC, E_WARNING, "could not serialize value");
                             smart_str_free(&buf);
                             return NULL;
                         }
 
-                        *flags = COUCHBASE_IS_SERIALIZED | compresser;
+                        *flags |= COUCHBASE_IS_SERIALIZED;
                         break;
                     }
             }
             break;
     }
 
-
 #ifdef HAVE_COMPRESSER
-    if ((*flags & COUCHBASE_COMPRESSION_MASK) && buf.len < COUCHBASE_G(compression_threshold)) {
-        *flags &= ~COUCHBASE_COMPRESSION_MASK;
+    if ((COUCHBASE_GET_COMPRESSER(*flags)) && buf.len < COUCHBASE_G(compression_threshold)) {
+        COUCHBASE_SET_COMPRESSER(*flags, COUCHBASE_COMPRESSER_NONE);
     }
 
-    if ((*flags & COUCHBASE_COMPRESSION_MASK)) {
+    if (COUCHBASE_GET_COMPRESSER(*flags)) {
         /* status */
         zend_bool compress_status = 0;
 
@@ -581,7 +581,7 @@ static char * php_couchbase_zval_to_payload(zval *value, size_t *payload_len, un
 #ifdef HAVE_COMPRESSER_FASTLZ
                 compress_status = ((payload_comp_len = fastlz_compress(buf.c, buf.len, payload_comp)) > 0);
 #else
-                php_error_docref(NULL TSRMLS_CC, E_WARNING, "Could not compress value, no fastlz lib support");
+                php_error_docref(NULL TSRMLS_CC, E_WARNING, "could not compress value, no fastlz lib support");
                 return NULL;
 #endif
                 break;
@@ -589,17 +589,17 @@ static char * php_couchbase_zval_to_payload(zval *value, size_t *payload_len, un
 #ifdef HAVE_COMPRESSER_ZLIB
                 compress_status = (compress((Bytef *)payload_comp, &payload_comp_len, (Bytef *)buf.c, buf.len) == Z_OK);
 #else
-                php_error_docref(NULL TSRMLS_CC, E_WARNING, "Could not compress value, no zlib lib support");
+                php_error_docref(NULL TSRMLS_CC, E_WARNING, "could not compress value, no zlib lib support");
                 return NULL;
 #endif
                 break;
              default:
-                php_error_docref(NULL TSRMLS_CC, E_WARNING, "Unknow compresser type: %d", compresser);
+                php_error_docref(NULL TSRMLS_CC, E_WARNING, "unknow compresser type: %d", compresser);
                 return NULL;
         }
 
         if (!compress_status) {
-            php_error_docref(NULL TSRMLS_CC, E_WARNING, "Could not compress value");
+            php_error_docref(NULL TSRMLS_CC, E_WARNING, "could not compress value");
             efree(payload);
             smart_str_free(&buf);
             return NULL;
@@ -610,7 +610,7 @@ static char * php_couchbase_zval_to_payload(zval *value, size_t *payload_len, un
             *payload_len = payload_comp_len + sizeof(size_t);
             payload[*payload_len] = 0;
         } else {
-            *flags &= ~COUCHBASE_COMPRESSION_MASK;
+            COUCHBASE_SET_COMPRESSER(*flags, COUCHBASE_COMPRESSER_NONE);
             *payload_len = buf.len;
             memcpy(payload, buf.c, buf.len);
             payload[buf.len] = 0;
@@ -621,7 +621,7 @@ static char * php_couchbase_zval_to_payload(zval *value, size_t *payload_len, un
         payload = estrndup(buf.c, buf.len);
     }
 #else
-    *flags &= ~COUCHBASE_COMPRESSION_MASK;
+    COUCHBASE_SET_COMPRESSER(*flags, COUCHBASE_COMPRESSER_NONE);
     *payload_len = buf.len;
     payload = estrndup(buf.c, buf.len);
 #endif
@@ -632,12 +632,13 @@ static char * php_couchbase_zval_to_payload(zval *value, size_t *payload_len, un
 /* }}} */
 
 static int php_couchbase_zval_from_payload(zval *value, char *payload, size_t payload_len, unsigned int flags, int serializer TSRMLS_DC) /* {{{ */ {
+    int compresser;
     char *buffer = NULL;
     zend_bool payload_emalloc = 0;
 
     if (payload == NULL && payload_len > 0) {
         php_error_docref(NULL TSRMLS_CC, E_WARNING,
-            "Could not handle non-existing value of length %zu", payload_len);
+            "could not handle non-existing value of length %zu", payload_len);
         return 0;
     } else if (payload == NULL) {
         if ((flags & 127) == IS_BOOL) {
@@ -648,7 +649,7 @@ static int php_couchbase_zval_from_payload(zval *value, char *payload, size_t pa
         return 1;
     }
 
-    if ((flags & COUCHBASE_COMPRESSION_MASK)) {
+    if ((compresser = COUCHBASE_GET_COMPRESSER(flags))) {
 #ifdef HAVE_COMPRESSER
         uint len;
         size_t length;
@@ -660,12 +661,12 @@ static int php_couchbase_zval_from_payload(zval *value, char *payload, size_t pa
         payload += sizeof(size_t);
         length = len;
 
-        switch (flags & COUCHBASE_COMPRESSION_MASK) {
+        switch (compresser) {
             case COUCHBASE_COMPRESSER_FASTLZ:
 #ifdef HAVE_COMPRESSER_FASTLZ
                 decompress_status = ((length = fastlz_decompress(payload, payload_len, buffer, len)) > 0);
 #else
-                php_error_docref(NULL TSRMLS_CC, E_WARNING, "Could not decompress value, no fastlz lib support");
+                php_error_docref(NULL TSRMLS_CC, E_WARNING, "could not decompress value, no fastlz lib support");
                 return 0;
 #endif
                 break;
@@ -690,14 +691,14 @@ static int php_couchbase_zval_from_payload(zval *value, char *payload, size_t pa
                 }
 
 #else
-                php_error_docref(NULL TSRMLS_CC, E_WARNING, "Could not decompress value, no zlib lib support");
+                php_error_docref(NULL TSRMLS_CC, E_WARNING, "could not decompress value, no zlib lib support");
                 return 0;
 #endif
                 break;
         }
 
         if (!decompress_status) {
-            php_error_docref(NULL TSRMLS_CC, E_WARNING, "Could not decompress value");
+            php_error_docref(NULL TSRMLS_CC, E_WARNING, "could not decompress value");
             efree(buffer);
             return 0;
         }
@@ -706,12 +707,12 @@ static int php_couchbase_zval_from_payload(zval *value, char *payload, size_t pa
         payload_len = length;
         payload_emalloc = 1;
 #else
-        php_error_docref(NULL TSRMLS_CC, E_WARNING, "Could not decompress value, no decompresser found");
+        php_error_docref(NULL TSRMLS_CC, E_WARNING, "could not decompress value, no decompresser found");
         return 0;
 #endif
     }
 
-    switch ((flags & 31)) {
+    switch (COUCHBASE_GET_TYPE(flags)) {
         case IS_STRING:
             ZVAL_STRINGL(value, payload, payload_len, 1);
             break;
@@ -743,7 +744,7 @@ static int php_couchbase_zval_from_payload(zval *value, char *payload, size_t pa
             if (!php_var_unserialize(&value, (const unsigned char **)&payload_tmp, (const unsigned char *)payload_tmp + payload_len, &var_hash TSRMLS_CC)) {
                 ZVAL_FALSE(value);
                 PHP_VAR_UNSERIALIZE_DESTROY(var_hash);
-                php_error_docref(NULL TSRMLS_CC, E_WARNING, "Could not unserialize value");
+                php_error_docref(NULL TSRMLS_CC, E_WARNING, "could not unserialize value");
                 if (payload_emalloc) {
                     efree(payload);
                 }
@@ -761,7 +762,7 @@ static int php_couchbase_zval_from_payload(zval *value, char *payload, size_t pa
             php_json_decode(value, payload, payload_len, (serializer == COUCHBASE_SERIALIZER_JSON_ARRAY), 512 TSRMLS_CC);
 # endif
 #else
-            php_error_docref(NULL TSRMLS_CC, E_WARNING, "Could not unserialize value, no json support");
+            php_error_docref(NULL TSRMLS_CC, E_WARNING, "could not unserialize value, no json support");
             if (payload_emalloc) {
                 efree(payload);
             }
@@ -1185,7 +1186,7 @@ static void php_couchbase_get_impl(INTERNAL_FUNCTION_PARAMETERS, int multi, int 
             }
             res = zend_read_property(couchbase_ce, getThis(), ZEND_STRL(COUCHBASE_PROPERTY_HANDLE), 1 TSRMLS_CC);
             if (ZVAL_IS_NULL(res) || IS_RESOURCE != Z_TYPE_P(res)) {
-                php_error_docref(NULL TSRMLS_CC, E_WARNING, "Unintilized Couchbase");
+                php_error_docref(NULL TSRMLS_CC, E_WARNING, "unintilized couchbase");
                 RETURN_FALSE;
             }
         } else {
@@ -1196,7 +1197,7 @@ static void php_couchbase_get_impl(INTERNAL_FUNCTION_PARAMETERS, int multi, int 
 
         ZEND_FETCH_RESOURCE(couchbase_res, php_couchbase_res *, &res, -1, PHP_COUCHBASE_RESOURCE, le_couchbase);
         if (couchbase_res->async) {
-            php_error_docref(NULL TSRMLS_CC, E_WARNING, "There are some results should be fetched before do any sync request");
+            php_error_docref(NULL TSRMLS_CC, E_WARNING, "there are some results should be fetched before do any sync request");
             RETURN_FALSE;
         }
 
@@ -1252,7 +1253,7 @@ static void php_couchbase_get_impl(INTERNAL_FUNCTION_PARAMETERS, int multi, int 
             }
             res = zend_read_property(couchbase_ce, getThis(), ZEND_STRL(COUCHBASE_PROPERTY_HANDLE), 1 TSRMLS_CC);
             if (ZVAL_IS_NULL(res) || IS_RESOURCE != Z_TYPE_P(res)) {
-                php_error_docref(NULL TSRMLS_CC, E_WARNING, "Unintilized Couchbase");
+                php_error_docref(NULL TSRMLS_CC, E_WARNING, "unintilized couchbase");
                 RETURN_FALSE;
             }
         } else {
@@ -1267,7 +1268,7 @@ static void php_couchbase_get_impl(INTERNAL_FUNCTION_PARAMETERS, int multi, int 
         }
 #if PHP_MAJOR_VERSION == 5 && PHP_MINOR_VERSION < 3
         if (callback && Z_TYPE_P(callback) != IS_NULL && !zend_is_callable(callback, 0, NULL)) {
-            php_error_docref(NULL TSRMLS_CC, E_WARNING, "Third argument is expected to be a valid callback");
+            php_error_docref(NULL TSRMLS_CC, E_WARNING, "third argument is expected to be a valid callback");
             return;
         }
 #endif
@@ -1277,7 +1278,7 @@ static void php_couchbase_get_impl(INTERNAL_FUNCTION_PARAMETERS, int multi, int 
 
         ZEND_FETCH_RESOURCE(couchbase_res, php_couchbase_res *, &res, -1, PHP_COUCHBASE_RESOURCE, le_couchbase);
         if (couchbase_res->async) {
-            php_error_docref(NULL TSRMLS_CC, E_WARNING, "There are some results should be fetched before do any sync request");
+            php_error_docref(NULL TSRMLS_CC, E_WARNING, "there are some results should be fetched before do any sync request");
             RETURN_FALSE;
         }
 
@@ -1392,7 +1393,7 @@ static void php_couchbase_get_delayed_impl(INTERNAL_FUNCTION_PARAMETERS, int oo)
         }
         res = zend_read_property(couchbase_ce, self, ZEND_STRL(COUCHBASE_PROPERTY_HANDLE), 1 TSRMLS_CC);
         if (ZVAL_IS_NULL(res) || IS_RESOURCE != Z_TYPE_P(res)) {
-            php_error_docref(NULL TSRMLS_CC, E_WARNING, "Unintilized Couchbase");
+            php_error_docref(NULL TSRMLS_CC, E_WARNING, "unintilized couchbase");
             RETURN_FALSE;
         }
     } else {
@@ -1409,7 +1410,7 @@ static void php_couchbase_get_delayed_impl(INTERNAL_FUNCTION_PARAMETERS, int oo)
         }
         res = zend_read_property(couchbase_ce, self, ZEND_STRL(COUCHBASE_PROPERTY_HANDLE), 1 TSRMLS_CC);
         if (ZVAL_IS_NULL(res) || IS_RESOURCE != Z_TYPE_P(res)) {
-            php_error_docref(NULL TSRMLS_CC, E_WARNING, "Unintilized Couchbase");
+            php_error_docref(NULL TSRMLS_CC, E_WARNING, "unintilized couchbase");
             RETURN_FALSE;
         }
     } else {
@@ -1419,7 +1420,7 @@ static void php_couchbase_get_delayed_impl(INTERNAL_FUNCTION_PARAMETERS, int oo)
     }
     if (callback && Z_TYPE_P(callback) != IS_NULL
             && !zend_is_callable(callback, 0, NULL)) {
-        php_error_docref(NULL TSRMLS_CC, E_WARNING, "Third argument is expected to be a valid callback");
+        php_error_docref(NULL TSRMLS_CC, E_WARNING, "third argument is expected to be a valid callback");
         return;
     }
 #endif
@@ -1552,7 +1553,7 @@ static void php_couchbase_fetch_impl(INTERNAL_FUNCTION_PARAMETERS, int multi, in
         zval *self = getThis();
         res = zend_read_property(couchbase_ce, self, ZEND_STRL(COUCHBASE_PROPERTY_HANDLE), 1 TSRMLS_CC);
         if (ZVAL_IS_NULL(res) || IS_RESOURCE != Z_TYPE_P(res)) {
-            php_error_docref(NULL TSRMLS_CC, E_WARNING, "Unintilized Couchbase");
+            php_error_docref(NULL TSRMLS_CC, E_WARNING, "unintilized couchbase");
             RETURN_FALSE;
         }
     } else {
@@ -1636,7 +1637,7 @@ static void php_couchbase_store_impl(INTERNAL_FUNCTION_PARAMETERS, libcouchbase_
             }
             res = zend_read_property(couchbase_ce, self, ZEND_STRL(COUCHBASE_PROPERTY_HANDLE), 1 TSRMLS_CC);
             if (ZVAL_IS_NULL(res) || IS_RESOURCE != Z_TYPE_P(res)) {
-                php_error_docref(NULL TSRMLS_CC, E_WARNING, "Unintilized Couchbase");
+                php_error_docref(NULL TSRMLS_CC, E_WARNING, "unintilized couchbase");
                 RETURN_FALSE;
             }
         } else {
@@ -1647,7 +1648,7 @@ static void php_couchbase_store_impl(INTERNAL_FUNCTION_PARAMETERS, libcouchbase_
 
         ZEND_FETCH_RESOURCE(couchbase_res, php_couchbase_res *, &res, -1, PHP_COUCHBASE_RESOURCE, le_couchbase);
         if (couchbase_res->async) {
-            php_error_docref(NULL TSRMLS_CC, E_WARNING, "There are some results should be fetched before do any sync request");
+            php_error_docref(NULL TSRMLS_CC, E_WARNING, "there are some results should be fetched before do any sync request");
             RETURN_FALSE;
         }
 
@@ -1701,7 +1702,7 @@ static void php_couchbase_store_impl(INTERNAL_FUNCTION_PARAMETERS, libcouchbase_
             }
             res = zend_read_property(couchbase_ce, self, ZEND_STRL(COUCHBASE_PROPERTY_HANDLE), 1 TSRMLS_CC);
             if (ZVAL_IS_NULL(res) || IS_RESOURCE != Z_TYPE_P(res)) {
-                php_error_docref(NULL TSRMLS_CC, E_WARNING, "Unintilized Couchbase");
+                php_error_docref(NULL TSRMLS_CC, E_WARNING, "unintilized couchbase");
                 RETURN_FALSE;
             }
         } else {
@@ -1712,7 +1713,7 @@ static void php_couchbase_store_impl(INTERNAL_FUNCTION_PARAMETERS, libcouchbase_
 
         ZEND_FETCH_RESOURCE(couchbase_res, php_couchbase_res *, &res, -1, PHP_COUCHBASE_RESOURCE, le_couchbase);
         if (couchbase_res->async) {
-            php_error_docref(NULL TSRMLS_CC, E_WARNING, "There are some results should be fetched before do any sync request");
+            php_error_docref(NULL TSRMLS_CC, E_WARNING, "there are some results should be fetched before do any sync request");
             RETURN_FALSE;
         }
 
@@ -1826,7 +1827,7 @@ static void php_couchbase_remove_impl(INTERNAL_FUNCTION_PARAMETERS, int oo) /* {
         }
         res = zend_read_property(couchbase_ce, self, ZEND_STRL(COUCHBASE_PROPERTY_HANDLE), 1 TSRMLS_CC);
         if (ZVAL_IS_NULL(res) || IS_RESOURCE != Z_TYPE_P(res)) {
-            php_error_docref(NULL TSRMLS_CC, E_WARNING, "Unintilized Couchbase");
+            php_error_docref(NULL TSRMLS_CC, E_WARNING, "unintilized couchbase");
             RETURN_FALSE;
         }
     } else {
@@ -1841,7 +1842,7 @@ static void php_couchbase_remove_impl(INTERNAL_FUNCTION_PARAMETERS, int oo) /* {
 
         ZEND_FETCH_RESOURCE(couchbase_res, php_couchbase_res *, &res, -1, PHP_COUCHBASE_RESOURCE, le_couchbase);
         if (couchbase_res->async) {
-            php_error_docref(NULL TSRMLS_CC, E_WARNING, "There are some results should be fetched before do any sync request");
+            php_error_docref(NULL TSRMLS_CC, E_WARNING, "there are some results should be fetched before do any sync request");
             RETURN_FALSE;
         }
 
@@ -1887,7 +1888,7 @@ static void php_couchbase_flush_impl(INTERNAL_FUNCTION_PARAMETERS, int oo) /* {{
         zval *self = getThis();
         res = zend_read_property(couchbase_ce, self, ZEND_STRL(COUCHBASE_PROPERTY_HANDLE), 1 TSRMLS_CC);
         if (ZVAL_IS_NULL(res) || IS_RESOURCE != Z_TYPE_P(res)) {
-            php_error_docref(NULL TSRMLS_CC, E_WARNING, "Unintilized Couchbase");
+            php_error_docref(NULL TSRMLS_CC, E_WARNING, "unintilized couchbase");
             RETURN_FALSE;
         }
     } else {
@@ -1902,7 +1903,7 @@ static void php_couchbase_flush_impl(INTERNAL_FUNCTION_PARAMETERS, int oo) /* {{
 
         ZEND_FETCH_RESOURCE(couchbase_res, php_couchbase_res *, &res, -1, PHP_COUCHBASE_RESOURCE, le_couchbase);
         if (couchbase_res->async) {
-            php_error_docref(NULL TSRMLS_CC, E_WARNING, "There are some results should be fetched before do any sync request");
+            php_error_docref(NULL TSRMLS_CC, E_WARNING, "there are some results should be fetched before do any sync request");
             RETURN_FALSE;
         }
 
@@ -1950,7 +1951,7 @@ static void php_couchbase_arithmetic_impl(INTERNAL_FUNCTION_PARAMETERS, char op,
         }
         res = zend_read_property(couchbase_ce, self, ZEND_STRL(COUCHBASE_PROPERTY_HANDLE), 1 TSRMLS_CC);
         if (ZVAL_IS_NULL(res) || IS_RESOURCE != Z_TYPE_P(res)) {
-            php_error_docref(NULL TSRMLS_CC, E_WARNING, "Unintilized Couchbase");
+            php_error_docref(NULL TSRMLS_CC, E_WARNING, "unintilized couchbase");
             RETURN_FALSE;
         }
     } else {
@@ -1966,7 +1967,7 @@ static void php_couchbase_arithmetic_impl(INTERNAL_FUNCTION_PARAMETERS, char op,
 
         ZEND_FETCH_RESOURCE(couchbase_res, php_couchbase_res *, &res, -1, PHP_COUCHBASE_RESOURCE, le_couchbase);
         if (couchbase_res->async) {
-            php_error_docref(NULL TSRMLS_CC, E_WARNING, "There are some results should be fetched before do any sync request");
+            php_error_docref(NULL TSRMLS_CC, E_WARNING, "there are some results should be fetched before do any sync request");
             RETURN_FALSE;
         }
 
@@ -2006,7 +2007,7 @@ static void php_couchbase_stats_impl(INTERNAL_FUNCTION_PARAMETERS, int oo) /* {{
         zval *self = getThis();
         res = zend_read_property(couchbase_ce, self, ZEND_STRL(COUCHBASE_PROPERTY_HANDLE), 1 TSRMLS_CC);
         if (ZVAL_IS_NULL(res) || IS_RESOURCE != Z_TYPE_P(res)) {
-            php_error_docref(NULL TSRMLS_CC, E_WARNING, "Unintilized Couchbase");
+            php_error_docref(NULL TSRMLS_CC, E_WARNING, "unintilized couchbase");
             RETURN_FALSE;
         }
     } else {
@@ -2021,7 +2022,7 @@ static void php_couchbase_stats_impl(INTERNAL_FUNCTION_PARAMETERS, int oo) /* {{
 
         ZEND_FETCH_RESOURCE(couchbase_res, php_couchbase_res *, &res, -1, PHP_COUCHBASE_RESOURCE, le_couchbase);
         if (couchbase_res->async) {
-            php_error_docref(NULL TSRMLS_CC, E_WARNING, "There are some results should be fetched before do any sync request");
+            php_error_docref(NULL TSRMLS_CC, E_WARNING, "there are some results should be fetched before do any sync request");
             RETURN_FALSE;
         }
 
@@ -2066,7 +2067,7 @@ static void php_couchbase_cas_impl(INTERNAL_FUNCTION_PARAMETERS, int oo) /* {{{ 
         }
         res = zend_read_property(couchbase_ce, self, ZEND_STRL(COUCHBASE_PROPERTY_HANDLE), 1 TSRMLS_CC);
         if (ZVAL_IS_NULL(res) || IS_RESOURCE != Z_TYPE_P(res)) {
-            php_error_docref(NULL TSRMLS_CC, E_WARNING, "Unintilized Couchbase");
+            php_error_docref(NULL TSRMLS_CC, E_WARNING, "unintilized couchbase");
             RETURN_FALSE;
         }
     } else {
@@ -2081,7 +2082,7 @@ static void php_couchbase_cas_impl(INTERNAL_FUNCTION_PARAMETERS, int oo) /* {{{ 
 
         ZEND_FETCH_RESOURCE(couchbase_res, php_couchbase_res *, &res, -1, PHP_COUCHBASE_RESOURCE, le_couchbase);
         if (couchbase_res->async) {
-            php_error_docref(NULL TSRMLS_CC, E_WARNING, "There are some results should be fetched before do any sync request");
+            php_error_docref(NULL TSRMLS_CC, E_WARNING, "there are some results should be fetched before do any sync request");
             RETURN_FALSE;
         }
 
@@ -2144,7 +2145,7 @@ static void php_couchbase_set_option_impl(INTERNAL_FUNCTION_PARAMETERS, int oo) 
         }
         res = zend_read_property(couchbase_ce, getThis(), ZEND_STRL(COUCHBASE_PROPERTY_HANDLE), 1 TSRMLS_CC);
         if (ZVAL_IS_NULL(res) || IS_RESOURCE != Z_TYPE_P(res)) {
-            php_error_docref(NULL TSRMLS_CC, E_WARNING, "Unintilized Couchbase");
+            php_error_docref(NULL TSRMLS_CC, E_WARNING, "unintilized couchbase");
             RETURN_FALSE;
         }
     } else {
@@ -2169,12 +2170,12 @@ static void php_couchbase_set_option_impl(INTERNAL_FUNCTION_PARAMETERS, int oo) 
                         }
                         RETURN_TRUE;
 #else
-                        php_error_docref(NULL TSRMLS_CC, E_WARNING, "Json serializer is not supported");
+                        php_error_docref(NULL TSRMLS_CC, E_WARNING, "json serializer is not supported");
                         RETURN_FALSE;
 #endif
                         break;
                     default:
-                        php_error_docref(NULL TSRMLS_CC, E_WARNING, "Unsupported serializer: %d", Z_LVAL_P(value));
+                        php_error_docref(NULL TSRMLS_CC, E_WARNING, "unsupported serializer: %d", Z_LVAL_P(value));
                 }
             }
         case COUCHBASE_OPT_PREFIX_KEY:
@@ -2198,13 +2199,13 @@ static void php_couchbase_set_option_impl(INTERNAL_FUNCTION_PARAMETERS, int oo) 
                         RETURN_TRUE;
                         break;
                     default:
-                        php_error_docref(NULL TSRMLS_CC, E_WARNING, "Unsupported compresser: %d", Z_LVAL_P(value));
+                        php_error_docref(NULL TSRMLS_CC, E_WARNING, "unsupported compresser: %d", Z_LVAL_P(value));
                         break;
                 }
             }
             break;
         default:
-            php_error_docref(NULL TSRMLS_CC, E_WARNING, "Unknow option type:%d", option);
+            php_error_docref(NULL TSRMLS_CC, E_WARNING, "unknow option type: %d", option);
             break;
     }
     RETURN_FALSE;
@@ -2222,7 +2223,7 @@ static void php_couchbase_get_option_impl(INTERNAL_FUNCTION_PARAMETERS, int oo) 
         }
         res = zend_read_property(couchbase_ce, getThis(), ZEND_STRL(COUCHBASE_PROPERTY_HANDLE), 1 TSRMLS_CC);
         if (ZVAL_IS_NULL(res) || IS_RESOURCE != Z_TYPE_P(res)) {
-            php_error_docref(NULL TSRMLS_CC, E_WARNING, "Unintilized Couchbase");
+            php_error_docref(NULL TSRMLS_CC, E_WARNING, "unintilized couchbase");
             RETURN_FALSE;
         }
     } else {
@@ -2249,7 +2250,7 @@ static void php_couchbase_get_option_impl(INTERNAL_FUNCTION_PARAMETERS, int oo) 
             RETURN_LONG(couchbase_res->compresser);
             break;
         default:
-            php_error_docref(NULL TSRMLS_CC, E_WARNING, "Unknow option type:%d", option);
+            php_error_docref(NULL TSRMLS_CC, E_WARNING, "unknow option type: %d", option);
             break;
     }
     RETURN_FALSE;
@@ -2391,7 +2392,7 @@ PHP_METHOD(couchbase, getResultCode) {
 
     res = zend_read_property(couchbase_ce, getThis(), ZEND_STRL(COUCHBASE_PROPERTY_HANDLE), 1 TSRMLS_CC);
     if (ZVAL_IS_NULL(res) || IS_RESOURCE != Z_TYPE_P(res)) {
-        php_error_docref(NULL TSRMLS_CC, E_WARNING, "Unintilized Couchbase");
+        php_error_docref(NULL TSRMLS_CC, E_WARNING, "unintilized couchbase");
         RETURN_FALSE;
     }
 
@@ -2708,6 +2709,16 @@ PHP_MINFO_FUNCTION(couchbase)
     php_info_print_table_row(2, "json support", "yes");
 #else
     php_info_print_table_row(2, "json support", "no");
+#endif
+#ifdef HAVE_COMPRESSER_FASTLZ
+    php_info_print_table_row(2, "fastlz support", "yes");
+#else
+    php_info_print_table_row(2, "fastlz support", "no");
+#endif
+#ifdef HAVE_COMPRESSER_ZLIB
+    php_info_print_table_row(2, "zlib support", "yes");
+#else
+    php_info_print_table_row(2, "zlib support", "no");
 #endif
 
     php_info_print_table_end();
