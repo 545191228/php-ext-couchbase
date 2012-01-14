@@ -1,13 +1,23 @@
 // $Id$
 // vim:ft=javascript
 
-// If your extension references something external, use ARG_WITH
-// ARG_WITH("couchbase", "for couchbase support", "no");
-
-// Otherwise, use ARG_ENABLE
-// ARG_ENABLE("couchbase", "enable couchbase support", "no");
+ARG_WITH("couchbase", "for couchbase support", "no");
+ARG_WITH("zlib-dir", "Set the path to ZLIB install prefix", "no");
+ARG_ENABLE("couchbase-json", "whether to enable json serializer support", "no");
+ARG_WITH("fastlz-src", "Set the path to FastLz src prefix", "no");
 
 if (PHP_COUCHBASE != "no") {
-	EXTENSION("couchbase", "couchbase.c");
+	if (CHECK_LIB("libcouchbase.lib", "couchbase", PHP_COUCHBASE) &&
+			CHECK_HEADER_ADD_INCLUDE("couchbase.h", "CFLAGS_COUCHBASE",
+				PHP_COUCHBASE + "\\include;" + PHP_PHP_BUILD + "\\include\\couchbase;" + PHP_COUCHBASE)) {
+		if (PHP_FASTLZ_SRC != "no") {
+			AC_DEFINE("HAVE_COMPRESSER", 1, "Whether has a compresser");
+			AC_DEFINE("HAVE_COMPRESSER_FASTLZ", 1, "Whether fastlz lib is available");
+			CHECK_HEADER_ADD_INCLUDE("fastlz.c", "CFLAGS_COUCHBASE", PHP_FASTLZ_SRC);
+		}
+		EXTENSION("couchbase", "couchbase.c");
+		AC_DEFINE('HAVE_COUCHBASE', 1, 'Have Couchbase library');
+	} else {
+		WARNING("couchbase not enabled; libraries and headers not found");
+	}
 }
-
