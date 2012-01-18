@@ -597,7 +597,7 @@ static char * php_couchbase_zval_to_payload(zval *value, size_t *payload_len, un
 #endif
                 break;
              default:
-                php_error_docref(NULL TSRMLS_CC, E_WARNING, "unknow compresser type: %d", compresser);
+                php_error_docref(NULL TSRMLS_CC, E_WARNING, "unknown compresser type: %d", compresser);
                 return NULL;
         }
 
@@ -2249,7 +2249,7 @@ static void php_couchbase_set_option_impl(INTERNAL_FUNCTION_PARAMETERS, int oo) 
             }
             break;
         default:
-            php_error_docref(NULL TSRMLS_CC, E_WARNING, "unknow option type: %d", option);
+            php_error_docref(NULL TSRMLS_CC, E_WARNING, "unknown option type: %d", option);
             break;
     }
     RETURN_FALSE;
@@ -2294,7 +2294,7 @@ static void php_couchbase_get_option_impl(INTERNAL_FUNCTION_PARAMETERS, int oo) 
             RETURN_LONG(couchbase_res->compresser);
             break;
         default:
-            php_error_docref(NULL TSRMLS_CC, E_WARNING, "unknow option type: %d", option);
+            php_error_docref(NULL TSRMLS_CC, E_WARNING, "unknown option type: %d", option);
             break;
     }
     RETURN_FALSE;
