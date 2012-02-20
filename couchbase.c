@@ -27,6 +27,7 @@
 #include "php.h"
 #include "php_ini.h"
 #include "ext/standard/info.h"
+#include "ext/standard/url.h"
 #include "ext/standard/php_smart_str.h"
 #ifdef HAVE_JSON_API
 # include "ext/json/php_json.h"
@@ -636,8 +637,10 @@ static char * php_couchbase_zval_to_payload(zval *value, size_t *payload_len, un
 
 static int php_couchbase_zval_from_payload(zval *value, char *payload, size_t payload_len, unsigned int flags, int serializer TSRMLS_DC) /* {{{ */ {
     int compresser;
-    char *buffer = NULL;
     zend_bool payload_emalloc = 0;
+#ifdef HAVE_COMPRESSER
+    char *buffer = NULL;
+#endif
 
     if (payload == NULL && payload_len > 0) {
         php_error_docref(NULL TSRMLS_CC, E_WARNING,
@@ -654,8 +657,7 @@ static int php_couchbase_zval_from_payload(zval *value, char *payload, size_t pa
 
     if ((compresser = COUCHBASE_GET_COMPRESSER(flags))) {
 #ifdef HAVE_COMPRESSER
-        uint len;
-        size_t length;
+        size_t len, length;
         zend_bool decompress_status = 0;
         /* This is copied from pecl-memcached */
         memcpy(&len, payload, sizeof(size_t));
@@ -720,6 +722,7 @@ static int php_couchbase_zval_from_payload(zval *value, char *payload, size_t pa
             ZVAL_STRINGL(value, payload, payload_len, 1);
             break;
 
+        case 0: /* see http://www.couchbase.com/issues/browse/PCBC-30 */
         case IS_LONG:
         {
             long lval = strtol(payload, NULL, 10);
@@ -824,7 +827,7 @@ static void php_couchbase_error_callback(libcouchbase_t handle, libcouchbase_err
      * @FIXME: when connect to a non-couchbase-server port (but the socket is valid)
      * like a apache server, process will be hanged by event_loop
      */
-    if (ctx->res->seqno < 0) {
+    if (ctx && ctx->res->seqno < 0) {
         ctx->res->io->stop_event_loop(ctx->res->io);
     }
 }
@@ -839,7 +842,7 @@ php_couchbase_get_callback(libcouchbase_t handle,
                             const void *key, size_t nkey,
                             const void *bytes, size_t nbytes,
                             uint32_t flags, uint64_t cas) {
-    zval *retval, *value;
+    zval *retval;
     php_couchbase_ctx *ctx = (php_couchbase_ctx *)cookie;
     TSRMLS_FETCH();
     php_ignore_value(handle);
@@ -856,7 +859,7 @@ php_couchbase_get_callback(libcouchbase_t handle,
     }
 
     if (ctx->res->async) { /* get_delayed */
-        zval *k, *v, *dst;
+        zval *k, *v;
         MAKE_STD_ZVAL(v);
         if (!php_couchbase_zval_from_payload(v, (char *)bytes, nbytes, flags, ctx->res->serializer TSRMLS_CC)) {
             ctx->res->rc = LIBCOUCHBASE_ERROR;
@@ -1114,8 +1117,45 @@ static void php_couchbase_create_impl(INTERNAL_FUNCTION_PARAMETERS, int oo) /* {
         libcouchbase_io_opt_t *iops;
         php_couchbase_res *couchbase_res;
         php_couchbase_ctx *ctx;
+        php_url *url = NULL;
         char *hashed_key;
-        int hashed_key_len;
+        uint hashed_key_len = 0;
+
+        if (ZEND_NUM_ARGS() == 1 && (strncasecmp(host, "http://", sizeof("http://") - 1) == 0
+                || strncasecmp(host, "https://", sizeof("https://") - 1) == 0)) {
+
+             if (!(url = php_url_parse_ex(host, host_len))) {
+                 php_error_docref(NULL TSRMLS_CC, E_WARNING, "malformed host url %s", host);
+                 RETURN_FALSE;
+             }
+
+             if (url->host) {
+                 host = url->host;
+                 if (url->port) {
+                    spprintf(&host, 0, "%s:%d", host, url->port);
+                    efree(url->host);
+                    url->host = host;
+                 }
+             } else {
+                 php_url_free(url);
+                 php_error_docref(NULL TSRMLS_CC, E_WARNING, "malformed host url %s", host);
+                 RETURN_FALSE;
+             }
+
+             user = url->user;
+             passwd = url->pass;
+             bucket = url->path;
+             if (*bucket == '/') {
+                 int i=0, j = strlen(bucket);
+                 if (*(bucket + j - 1) == '/') {
+                     *(bucket + j - 1) = '\0';
+                 }
+                 for(;i<j;i++) {
+                     bucket[i] = bucket[i+1];
+                 }
+             }
+        }
+
         if (persistent) {
             zend_rsrc_list_entry *le;
             hashed_key_len = spprintf(&hashed_key, 0, "couchbase_%s_%s_%s_%s", host, user, passwd, bucket);
@@ -1132,6 +1172,9 @@ static void php_couchbase_create_impl(INTERNAL_FUNCTION_PARAMETERS, int oo) /* {
 create_new_link:
             iops = libcouchbase_create_io_ops(LIBCOUCHBASE_IO_OPS_DEFAULT, NULL, NULL);
             if (!iops) {
+                if (url) {
+                    php_url_free(url);
+                }
                 php_error_docref(NULL TSRMLS_CC, E_WARNING, "failed to create IO instance");
                 RETURN_FALSE;
             }
@@ -1142,6 +1185,9 @@ create_new_link:
 
             handle = libcouchbase_create(host, user, passwd, bucket, iops);
             if (!handle) {
+                if (url) {
+                    php_url_free(url);
+                }
                 php_error_docref(NULL TSRMLS_CC, E_WARNING, "Failed to create libcouchbase instance");
                 RETURN_FALSE;
             }
@@ -1149,6 +1195,9 @@ create_new_link:
             php_ignore_value(libcouchbase_set_error_callback(handle, php_couchbase_error_callback));
 
             if (LIBCOUCHBASE_SUCCESS != (retval = libcouchbase_connect(handle))) {
+                if (url) {
+                    php_url_free(url);
+                }
                 php_error_docref(NULL TSRMLS_CC, E_WARNING,
                         "Failed to connect libcouchbase to server: %s", libcouchbase_strerror(handle, retval));
                 RETURN_FALSE;
@@ -1178,6 +1227,9 @@ create_new_link:
 
             couchbase_res->seqno = 0;
             if (LIBCOUCHBASE_SUCCESS != (retval = libcouchbase_get_last_error(handle))) {
+                if (url) {
+                    php_url_free(url);
+                }
                 php_error_docref(NULL TSRMLS_CC, E_WARNING,
                         "Failed to connect libcouchbase to server: %s", libcouchbase_strerror(handle, retval));
                 libcouchbase_destroy(handle);
@@ -1190,6 +1242,9 @@ create_new_link:
                 Z_TYPE(le) = le_pcouchbase;
                 le.ptr = couchbase_res;
                 if (zend_hash_update(&EG(persistent_list), hashed_key, hashed_key_len + 1, (void *) &le, sizeof(zend_rsrc_list_entry), NULL) == FAILURE) {
+                    if (url) {
+                        php_url_free(url);
+                    }
                     php_error_docref(NULL TSRMLS_CC, E_WARNING, "Failed to store persistent link");
                 }
                 efree(hashed_key);
@@ -1200,6 +1255,10 @@ create_new_link:
         if (oo) {
             zval *self = getThis();
             zend_update_property(couchbase_ce, self, ZEND_STRL(COUCHBASE_PROPERTY_HANDLE), return_value TSRMLS_CC);
+        }
+
+        if (url) {
+            php_url_free(url);
         }
     }
 }
@@ -1606,7 +1665,6 @@ static void php_couchbase_fetch_impl(INTERNAL_FUNCTION_PARAMETERS, int multi, in
         }
     }
     {
-        libcouchbase_error_t retval;
         php_couchbase_res *couchbase_res;
         php_couchbase_ctx *ctx;
 
@@ -1619,8 +1677,8 @@ static void php_couchbase_fetch_impl(INTERNAL_FUNCTION_PARAMETERS, int multi, in
 fetch_one:
             {
                 char *key;
-                int key_len;
-                long index = 0;
+                uint key_len;
+                ulong index = 0;
                 zval **ppzval;
                 zval *stash = (zval *)ctx->extended_value;
                 if (zend_hash_num_elements(Z_ARRVAL_P(stash)) == 0) {
@@ -1737,7 +1795,8 @@ static void php_couchbase_store_impl(INTERNAL_FUNCTION_PARAMETERS, libcouchbase_
     } else {
         zval *akeys, **ppzval;
         char *key;
-        long klen = 0, idx;
+        uint klen = 0;
+        ulong idx;
         int key_type, nkey = 0;
 
         if (oo) {
@@ -2219,7 +2278,7 @@ static void php_couchbase_set_option_impl(INTERNAL_FUNCTION_PARAMETERS, int oo) 
 #endif
                         break;
                     default:
-                        php_error_docref(NULL TSRMLS_CC, E_WARNING, "unsupported serializer: %d", Z_LVAL_P(value));
+                        php_error_docref(NULL TSRMLS_CC, E_WARNING, "unsupported serializer: %ld", Z_LVAL_P(value));
                 }
             }
         case COUCHBASE_OPT_PREFIX_KEY:
@@ -2243,13 +2302,13 @@ static void php_couchbase_set_option_impl(INTERNAL_FUNCTION_PARAMETERS, int oo) 
                         RETURN_TRUE;
                         break;
                     default:
-                        php_error_docref(NULL TSRMLS_CC, E_WARNING, "unsupported compresser: %d", Z_LVAL_P(value));
+                        php_error_docref(NULL TSRMLS_CC, E_WARNING, "unsupported compresser: %ld", Z_LVAL_P(value));
                         break;
                 }
             }
             break;
         default:
-            php_error_docref(NULL TSRMLS_CC, E_WARNING, "unknown option type: %d", option);
+            php_error_docref(NULL TSRMLS_CC, E_WARNING, "unknown option type: %ld", option);
             break;
     }
     RETURN_FALSE;
@@ -2294,7 +2353,7 @@ static void php_couchbase_get_option_impl(INTERNAL_FUNCTION_PARAMETERS, int oo) 
             RETURN_LONG(couchbase_res->compresser);
             break;
         default:
-            php_error_docref(NULL TSRMLS_CC, E_WARNING, "unknown option type: %d", option);
+            php_error_docref(NULL TSRMLS_CC, E_WARNING, "unknown option type: %ld", option);
             break;
     }
     RETURN_FALSE;

@@ -83,6 +83,10 @@ extern zend_class_entry *couchbase_ce;
 #define COUCHBASE_GET_COMPRESSER(f)         ((f) >> 5)
 #define COUCHBASE_SET_COMPRESSER(f, c)      ((f) = ((f) & ~COUCHBASE_COMPRESSER_MASK) | (c) << 5)
 
+#ifndef Z_ADDREF_P 
+#define Z_ADDREF_P  ZVAL_ADDREF
+#endif
+
 
 typedef struct _php_couchbase_res {
     libcouchbase_t handle;
