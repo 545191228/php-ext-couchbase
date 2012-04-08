@@ -31,6 +31,8 @@ var_dump(couchbase_get($handle, $key));
 string(3) "foo"
 NULL
 string(3) "foo"
+
+Warning: couchbase_delete(): Faild to remove a value from server: Key exists (with a different CAS value) in %s008.php on line %d
 bool(false)
 string(3) "bar"
 bool(true)

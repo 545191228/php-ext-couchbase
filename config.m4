@@ -6,7 +6,7 @@ dnl Make sure that the comment is aligned:
 [  --with-couchbase=[DIR]            Set the path to libcouchbase install prefix])
 
 PHP_ARG_ENABLE(couchbase-json, whether to enable json serializer support,
-[  --enable-couchbase-json Enable json serializer support], no, no)
+[  --disable-couchbase-json Disable json serializer support], yes)
 
 if test -z "$PHP_ZLIB_DIR"; then
 PHP_ARG_WITH(zlib-dir, for ZLIB,
@@ -18,7 +18,9 @@ PHP_ARG_WITH(fastlz-src, for FastLZ,
 
 if test "$PHP_COUCHBASE" != "no"; then
   if test -r "$PHP_COUCHBASE/include/libcouchbase/couchbase.h"; then
+      AC_MSG_CHECKING([for libcouchbase location])
       COUCHBASE_DIR="$PHP_COUCHBASE"
+      AC_MSG_RESULT($PHP_COUCHBASE)
   else
     dnl # look in system dirs
      AC_MSG_CHECKING([for libcouchbase files in default path])
@@ -146,8 +148,8 @@ if test "$PHP_COUCHBASE" != "no"; then
     AC_MSG_RESULT([$PHP_ZLIB_DIR])
     PHP_ADD_LIBRARY_WITH_PATH(z, $PHP_ZLIB_DIR/$PHP_LIBDIR, COUCHBASE_SHARED_LIBADD)
     PHP_ADD_INCLUDE($PHP_ZLIB_INCDIR)
-    AC_DEFINE(HAVE_COMPRESSER,1,[Whether has a compresser])
-    AC_DEFINE(HAVE_COMPRESSER_ZLIB,1,[Whether zlib lib is available])
+    AC_DEFINE(HAVE_COMPRESSION,1,[Whether has a compresser])
+    AC_DEFINE(HAVE_COMPRESSION_ZLIB,1,[Whether zlib lib is available])
   else
     AC_MSG_ERROR([couchbase support requires ZLIB. Use --with-zlib-dir=<DIR> to specify the prefix where ZLIB headers and library are located])
   fi
@@ -157,8 +159,8 @@ if test "$PHP_COUCHBASE" != "no"; then
     if test -f "$PHP_FASTLZ_SRC/fastlz.c"; then
       AC_MSG_RESULT([$PHP_FASTLZ_SRC])
       PHP_ADD_INCLUDE($PHP_FASTLZ_SRC)
-      AC_DEFINE(HAVE_COMPRESSER,1,[Whether has a compresser])
-      AC_DEFINE(HAVE_COMPRESSER_FASTLZ,1,[Whether fastlz lib is available])
+      AC_DEFINE(HAVE_COMPRESSION,1,[Whether has a compresser])
+      AC_DEFINE(HAVE_COMPRESSION_FASTLZ,1,[Whether fastlz lib is available])
     else
       AC_MSG_ERROR([Can't find fastlz src under $PHP_FASTLZ_SRC])
     fi
